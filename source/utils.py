@@ -1,6 +1,7 @@
 import os
 import sys
 import shutil
+import tempfile
 from typing import Optional
 try:
     import winreg
@@ -31,6 +32,43 @@ def appdata_path():
         return os.getenv('APPDATA')
     else:
         return os.path.join(os.path.expanduser('~'), '.organizer')
+
+def config_directory():
+    """Return the platform's per-user configuration directory."""
+    if sys.platform == "win32":
+        base_path = os.getenv("APPDATA") or os.path.join(
+            os.path.expanduser("~"), "AppData", "Roaming"
+        )
+        return os.path.join(base_path, "Organizer")
+    base_path = os.getenv("XDG_CONFIG_HOME") or os.path.join(
+        os.path.expanduser("~"), ".config"
+    )
+    return os.path.join(base_path, "organizer")
+
+def get_config_path():
+    """Return the location of the user's editable configuration."""
+    return os.path.join(config_directory(), "config.yaml")
+
+def _legacy_config_paths():
+    paths = [root_path(os.path.join("resources", "config.yaml"))]
+    if getattr(sys, "frozen", False):
+        paths.insert(0, os.path.join(os.path.dirname(sys.executable), "config.yaml"))
+    return paths
+
+def _migrate_legacy_config(config_file):
+    with config_lock:
+        if os.path.exists(config_file):
+            return
+        for legacy_path in _legacy_config_paths():
+            if os.path.isfile(legacy_path):
+                os.makedirs(os.path.dirname(config_file), exist_ok=True)
+                shutil.copy2(legacy_path, config_file)
+                logger.info(
+                    "Migrated configuration from %s to %s",
+                    legacy_path,
+                    config_file,
+                )
+                return
 
 def setup_logging():
     """Sets up a rotating log file in the AppData directory."""
@@ -78,20 +116,22 @@ def locate_folder_path() -> Optional[str]:
         return os.path.join(os.path.expanduser('~'), 'Downloads')
 
 def load_config():
-    """Returns the content of config.yaml"""
-    # get the directory where the script is located
-    config_file = root_path(os.path.join('resources', 'config.yaml'))
+    """Load the user's configuration, migrating the bundled file if needed."""
+    config_file = get_config_path()
+    with config_lock:
+        if not os.path.exists(config_file):
+            _migrate_legacy_config(config_file)
 
-    if not os.path.exists(config_file):
-        logger.error(f"'{config_file}' not found. Please create it.")
-        return None
-    with open(config_file, "r") as f:
-        try:
-            config = yaml.safe_load(f)
-            return config
-        except yaml.YAMLError as e:
-            logger.error(f"Error parsing YAML file: {e}")
+        if not os.path.exists(config_file):
+            logger.error(f"'{config_file}' not found. Please create it.")
             return None
+        with open(config_file, "r", encoding="utf-8") as f:
+            try:
+                config = yaml.safe_load(f)
+                return config
+            except yaml.YAMLError as e:
+                logger.error(f"Error parsing YAML file: {e}")
+                return None
 
 def get_rules():
     """Returns just the rules from the config."""
@@ -122,11 +162,25 @@ def save_interval(interval_minutes):
         logger.info("Interval updated in config.yaml")
 
 def save_config(config):
-    """Save the config to the config.yaml file."""
-    config_file = root_path("resources/config.yaml")
+    """Save the config to the user's per-user configuration file."""
+    config_file = get_config_path()
+    config_directory_path = os.path.dirname(config_file)
+    os.makedirs(config_directory_path, exist_ok=True)
     with config_lock:
-        with open(config_file, "w") as f:
-            yaml.dump(config, f, default_flow_style=False)
+        temporary_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=config_directory_path,
+                delete=False,
+            ) as config_file_handle:
+                temporary_path = config_file_handle.name
+                yaml.safe_dump(config, config_file_handle, default_flow_style=False)
+            os.replace(temporary_path, config_file)
+        finally:
+            if temporary_path and os.path.exists(temporary_path):
+                os.remove(temporary_path)
 
 def update_rule(updated_rule):
     """Update an existing rule in the config."""
@@ -171,78 +225,80 @@ def add_rule(new_rule):
             save_config(config)
             logger.info(f"Added {new_rule} rule to config.yaml")
 
+def get_sort_plan(downloads_dir=None, rules=None):
+    """Return planned source/destination paths without changing any files."""
+    if downloads_dir is None:
+        downloads_dir = locate_folder_path()
+    if rules is None:
+        rules = get_rules()
+    if not downloads_dir or not rules:
+        return []
+
+    planned_moves = []
+    reserved_paths = set()
+    for filename in os.listdir(downloads_dir):
+        file_path = os.path.join(downloads_dir, filename)
+        if not os.path.isfile(file_path):
+            continue
+
+        file_name, file_extension = os.path.splitext(filename)
+        for rule in rules:
+            match_extension = file_extension in rule.get("extensions", [])
+            match_keyword = bool(rule.get("keywords")) and any(
+                keyword.lower() in file_name for keyword in rule["keywords"]
+            )
+            if not (match_extension or match_keyword):
+                continue
+
+            if rule["sub"]:
+                destination_folder = os.path.join(downloads_dir, rule["destination"])
+            else:
+                destination_folder = rule["destination"]
+            if not os.path.isdir(destination_folder):
+                continue
+
+            destination_path = get_final_name(
+                file_name, file_extension, destination_folder, reserved_paths
+            )
+            reserved_paths.add(os.path.normcase(destination_path))
+            planned_moves.append((file_path, destination_path))
+            break
+    return planned_moves
+
 def file_sorter():
-    """Reads all the files in the default Download directory and moves them following the rulers in config.yaml"""
-    # locate Download directory
+    """Move files according to the configured sorting rules."""
     downloads_dir = locate_folder_path()
-
-    # load sorting rules
     rules = get_rules()
-
     if not rules:
         return
-    # scan folder and check files 
+
     try:
-        for filename in os.listdir(downloads_dir):
-            # build file path
-            file_path = os.path.join(downloads_dir, filename)
-            
-            # check if file
-            if not os.path.isfile(file_path):
-                continue
-        
-            # get file name and extension
-            file_name, file_extension = os.path.splitext(file_path)
-
-            # Check against each rule
-            for rule in rules:
-
-                # Check if the file extension matches
-                match_extension = file_extension in rule.get("extensions", [])
-                
-                # Check if any keyword matches
-                match_keyword = False
-                if rule.get("keywords"):
-                    match_keyword = any(keyword.lower() in file_name for keyword in rule["keywords"])
-
-                if match_extension or match_keyword:
-                    # check if destination is sub-folder
-                    if rule["sub"]:
-                        destination_folder = os.path.join(downloads_dir, rule["destination"])
-                    else:
-                        destination_folder = rule["destination"]
-                    # check if destination folder exists
-                    if not os.path.isdir(destination_folder):
-                        continue
-                    
-                    file_path = get_final_name(file_path, file_name, file_extension, destination_folder)
-
-                    # Move the file
-                    try:
-                        shutil.move(file_path, destination_folder)
-                        logger.info(f"Moved {os.path.basename(file_path)} to {destination_folder}.")
-                        break # Stop checking rules for this file
-                    except Exception as e:
-                        logger.exception(f"Error moving {file_path}.")
-                        break
+        for source_path, destination_path in get_sort_plan(downloads_dir, rules):
+            try:
+                shutil.move(source_path, destination_path)
+                logger.info("Moved %s to %s.", source_path, destination_path)
+            except Exception:
+                logger.exception("Error moving %s.", source_path)
     except PermissionError:
         logger.error("Permission denied accessing downloads folder")
     except Exception as e:
         logger.exception("Unexpected error in file_sorter")
 
-def get_final_name(file_path, file_name, file_extension, destination_folder) -> str:
-    """Renames the file if there is already a file with the same name in the destination folder"""
+def get_final_name(file_name, file_extension, destination_folder, reserved_paths=None) -> str:
+    """Return an unused destination path without changing the source file."""
+    if reserved_paths is None:
+        reserved_paths = set()
     count = 1
-    new_name = file_name
-    while os.path.isfile(os.path.join(destination_folder,os.path.basename(new_name)+file_extension)):
-        # rename the new file
-        new_name = file_name+"("+str(count)+")"
-        os.rename(file_path, new_name+file_extension)
-        # update file path
-        file_path = new_name+file_extension
+    destination_path = os.path.join(destination_folder, file_name + file_extension)
+    while (
+        os.path.exists(destination_path)
+        or os.path.normcase(destination_path) in reserved_paths
+    ):
+        destination_path = os.path.join(
+            destination_folder, f"{file_name}({count}){file_extension}"
+        )
         count += 1
-    
-    return file_path
+    return destination_path
 
 def create_folder(new_path):
     """Create folder in the Download folder"""

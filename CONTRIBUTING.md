@@ -2,19 +2,19 @@
 
 Thank you for your interest in contributing to Download Organizer! This guide will help you get started with contributing to the project.
 
-## 🤝 How to Contribute
+## How to Contribute
 
 There are many ways to contribute to this project:
 
-- 🐛 **Report bugs** - Found something that doesn't work? Let us know!
-- 💡 **Suggest features** - Have an idea to make the app better?
-- 📝 **Improve documentation** - Help make the docs clearer and more comprehensive
-- 🔧 **Fix bugs** - Submit pull requests to resolve issues
-- ✨ **Add features** - Implement new functionality
-- 🧪 **Test** - Help test the application on different platforms
-- 🎨 **UI/UX improvements** - Make the interface more user-friendly
+- **Report bugs** - Found something that doesn't work? Let us know!
+- **Suggest features** - Have an idea to make the app better?
+- **Improve documentation** - Help make the docs clearer and more comprehensive
+- **Fix bugs** - Submit pull requests to resolve issues
+- **Add features** - Implement new functionality
+- **Test** - Help test the application on different platforms
+- **UI/UX improvements** - Make the interface more user-friendly
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -52,7 +52,7 @@ There are many ways to contribute to this project:
    python source/main.py
    ```
 
-## 📋 Development Guidelines
+## Development Guidelines
 
 ### Code Style
 
@@ -99,11 +99,11 @@ logger.error("Error occurred during operation")
 
 ### Configuration
 
-- Configuration is stored in `resources/config.yaml`
+- Default configuration ships in `resources/config.yaml`; user settings are stored in the per-user configuration directory documented in the README
 - Use `utils.load_config()` and `utils.save_config()` for modifications
 - Always validate configuration data before use
 
-## 🐛 Bug Reports
+## Bug Reports
 
 When reporting bugs, please include:
 
@@ -147,7 +147,7 @@ Paste any error messages here
 Any other relevant information
 ```
 
-## 💡 Feature Requests
+## Feature Requests
 
 When suggesting features, please include:
 
@@ -216,9 +216,16 @@ Brief description of changes made
 Add screenshots of UI changes
 ```
 
-## 🧪 Testing
+## Testing
 
-Currently, the project relies on manual testing. When contributing:
+Run the automated tests before submitting changes:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The file-sorting tests use temporary directories, so they do not touch your
+Downloads folder. When contributing, also use the manual checklist below:
 
 ### Manual Testing Checklist
 
@@ -243,7 +250,7 @@ Currently, the project relies on manual testing. When contributing:
 - [ ] Duplicate file naming
 - [ ] Permission errors
 
-## 🌟 Recognition
+## Recognition
 
 Contributors will be recognized:
 
@@ -252,7 +259,7 @@ Contributors will be recognized:
 - **README.md** - Significant contributors listed
 - **Release notes** - Feature contributions highlighted
 
-## 📞 Getting Help
+## Getting Help
 
 **Need help getting started?**
 
@@ -266,28 +273,13 @@ Contributors will be recognized:
 - Search existing issues before creating new ones
 - Use clear, descriptive titles
 
-## 📜 Code of Conduct
+## Code of Conduct
 
 By participating in this project, you agree to:
 
 - **Be respectful** to all contributors
 - **Provide constructive feedback**
 - **Focus on what's best** for the project
-- **Show empathy** towards other community members
-- **Accept criticism gracefully**
-
-## 🏆 First-Time Contributors
-
-**New to open source?** We welcome first-time contributors! Look for issues labeled:
-- `good first issue` - Simple, well-defined tasks
-- `help wanted` - Issues we'd love help with
-- `documentation` - Documentation improvements
-
-**Getting Started Tips:**
-1. Start with small changes
-2. Read the existing code to understand patterns
-3. Ask questions if anything is unclear
-4. Don't be afraid to make mistakes - we're here to help!
 
 ---
 

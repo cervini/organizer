@@ -7,6 +7,7 @@ import utils
 import gui
 import logging
 import os
+import sys
 
 # Get the logger from utils
 logger = utils.setup_logging()
@@ -50,6 +51,14 @@ def run_tray_icon():
 
 def main():
     """Main function to start the application."""
+    if "--check-config" in sys.argv[1:]:
+        config = utils.load_config()
+        if not isinstance(config, dict):
+            logger.error("Configuration is missing or invalid.")
+            return 1
+        logger.info("Configuration loaded successfully from %s.", utils.get_config_path())
+        return 0
+
     # Start the background file organizer thread
     organization_thread = threading.Thread(target=organize_files_loop)
     organization_thread.daemon = True
@@ -68,7 +77,8 @@ def main():
     # When the GUI window is closed, the script will continue from here.
     logger.info("Main GUI window closed. Shutting down.")
     exit_action()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

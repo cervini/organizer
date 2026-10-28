@@ -17,6 +17,7 @@ A cross-platform desktop utility that automatically organizes your Downloads fol
 - **Smart file handling**: Automatically handles duplicate filenames with incremental numbering
 - **Adjustable intervals**: Customize how frequently the organizer scans for new files
 - **Quick actions**: Manual sort and default folder creation buttons
+- **Sort preview**: Review planned file moves before running a manual sort
 - **Comprehensive logging**: Detailed logs stored in system AppData directory
 
 ## Installation
@@ -60,15 +61,21 @@ A cross-platform desktop utility that automatically organizes your Downloads fol
    - **Fedora:** `sudo dnf install python3-gobject gtk3`
    - **Arch Linux:** `sudo pacman -S python-gobject gtk3`
 
-3. **Create executable:**
+3. **Build the Windows installer:**
+
+   Install Python 3.12 and [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run:
+
    ```bash
-   pyinstaller --windowed --onefile source/main.py
+   powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
    ```
 
-4. **Create installer (Windows only):**
-   - Open `installer_script.iss` in Inno Setup
-   - Click **Build → Compile**
-   - Find the installer in the `Output/` folder
+   The build script creates a temporary virtual environment, installs the pinned
+   dependencies, runs the test suite, packages the app and compiles the installer.
+   It then installs the package into a temporary directory, verifies first-run
+   configuration migration and preservation of existing settings, uninstalls that
+   test copy, and removes its temporary environment. Find the installer in `Output/`.
+   To set the displayed installer version, pass `-Version`, for example
+   `-Version 2.1.3`.
 
 ## Usage
 
@@ -89,6 +96,7 @@ The configuration window provides several tools:
 **Top Toolbar:**
 - **Add New Rule**: Create custom sorting rules
 - **Sort Downloads folder**: Manually trigger organization
+- **Preview sort**: Review planned moves without changing files
 - **Create default folders**: Set up common file type folders
 - **Interval setting**: Adjust scanning frequency (in minutes)
 
@@ -172,7 +180,14 @@ The application ships with sensible defaults:
 
 ### Configuration File
 
-Rules are stored in `resources/config.yaml`:
+The default rules ship in `resources/config.yaml`. Your editable settings are stored
+in a per-user configuration directory:
+
+- **Windows:** `%APPDATA%\Organizer\config.yaml`
+- **macOS/Linux:** `$XDG_CONFIG_HOME/organizer/config.yaml`, or `~/.config/organizer/config.yaml` when `XDG_CONFIG_HOME` is not set
+
+On first launch, the app copies an existing configuration from the previous location
+to the user configuration directory. The bundled default file is not modified.
 
 ```yaml
 interval: 2  # Minutes between scans

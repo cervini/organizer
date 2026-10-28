@@ -4,6 +4,7 @@ from ttkbootstrap.constants import *
 import threading
 import utils
 import sys
+from tkinter import messagebox
 
 # --- Drag and Drop State ---
 # Dictionary to hold information about the widget being dragged
@@ -220,6 +221,13 @@ def open_config_window():
         bootstyle="info-outline"
     )
     sort_button.pack(side="left")
+    preview_button = ttk.Button(
+        top_frame,
+        text="Preview sort",
+        command=lambda: open_sort_preview(config_window),
+        bootstyle="secondary-outline"
+    )
+    preview_button.pack(side="left")
     create_default_folders_button = ttk.Button(
         top_frame,
         text="Create deafult folders",
@@ -273,6 +281,50 @@ def open_config_window():
         ttk.Label(scrollable_frame, text="Could not load or find any rules in config.yaml.").pack(pady=20)
 
     config_window.mainloop()
+
+def open_sort_preview(parent_window):
+    """Show planned file moves without changing any files."""
+    try:
+        planned_moves = utils.get_sort_plan()
+    except Exception as error:
+        utils.logger.exception("Could not create file sorting preview.")
+        messagebox.showerror("Preview failed", str(error), parent=parent_window)
+        return
+
+    preview_window = tk.Toplevel(parent_window)
+    set_window_icon(preview_window)
+    preview_window.title("Preview Sort")
+    preview_window.geometry("700x450")
+    preview_window.transient(parent_window)
+
+    content = ttk.Frame(preview_window, padding=10)
+    content.pack(fill="both", expand=True)
+    if not planned_moves:
+        ttk.Label(content, text="No files match the current rules.").pack(
+            anchor="w", pady=5
+        )
+    else:
+        ttk.Label(
+            content,
+            text=f"{len(planned_moves)} file(s) would be moved:",
+        ).pack(anchor="w", pady=(0, 5))
+
+    text_frame = ttk.Frame(content)
+    text_frame.pack(fill="both", expand=True)
+    scrollbar = ttk.Scrollbar(text_frame, orient="vertical")
+    preview_text = tk.Text(text_frame, wrap="char", yscrollcommand=scrollbar.set)
+    scrollbar.configure(command=preview_text.yview)
+    scrollbar.pack(side="right", fill="y")
+    preview_text.pack(side="left", fill="both", expand=True)
+    for source_path, destination_path in planned_moves:
+        preview_text.insert(
+            "end",
+            f"{source_path}\n    -> {destination_path}\n\n",
+        )
+    preview_text.configure(state="disabled")
+    ttk.Button(content, text="Close", command=preview_window.destroy).pack(
+        anchor="e", pady=(8, 0)
+    )
 
 def open_delete_window(rule, parent_window, frame_to_refresh):
     """Opens a window to delete a rule"""
