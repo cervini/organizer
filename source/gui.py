@@ -1,78 +1,131 @@
 import tkinter as tk
 import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
 import threading
 import utils
 import sys
 from tkinter import messagebox
 
-# --- Drag and Drop State ---
-# Dictionary to hold information about the widget being dragged
-drag_data = {
-    "widget": None,
-    "start_x": 0,
-    "start_y": 0,
-}
+def _rule_frames(parent_frame):
+    ordered_frames = getattr(parent_frame, "rule_frame_order", None)
+    if ordered_frames is not None:
+        return [frame for frame in ordered_frames if frame.winfo_exists()]
+    return [
+        child
+        for child in parent_frame.winfo_children()
+        if hasattr(child, "rule_data")
+    ]
 
-def on_drag_start(event, widget):
-    """Initiates the drag operation."""
-    # Record the widget being dragged and the initial mouse position
-    drag_data["widget"] = widget
-    drag_data["start_x"] = event.x_root
-    drag_data["start_y"] = event.y_root
-    # Lift the widget to the top of the stacking order
-    widget.lift()
 
-def on_drag_motion(event):
-    """Moves the widget with the mouse."""
-    if drag_data["widget"]:
-        # Calculate how much the mouse has moved
-        delta_x = event.x_root - drag_data["start_x"]
-        delta_y = event.y_root - drag_data["start_y"]
-        
-        # Get the initial position of the widget
-        x = drag_data["widget"].winfo_x()
-        y = drag_data["widget"].winfo_y()
+def _update_rule_order_controls(parent_frame):
+    frames = _rule_frames(parent_frame)
+    for index, frame in enumerate(frames, start=1):
+        frame.order_label.configure(text=f"{index:02}")
+        frame.move_up_button.configure(
+            state="normal" if index > 1 else "disabled"
+        )
+        frame.move_down_button.configure(
+            state="normal" if index < len(frames) else "disabled"
+        )
 
-        # Calculate the new position
-        new_x = x + delta_x
-        new_y = y + delta_y
-        
-        # Move the widget
-        drag_data["widget"].place(x=new_x, y=new_y)
 
-        # Update the starting position for the next motion event
-        drag_data["start_x"] = event.x_root
-        drag_data["start_y"] = event.y_root
+def _animate_rule_order(parent_frame, original_order, ordered_frames):
+    """Slide the reordered rule cards into their new positions."""
+    parent_frame.rule_frame_order = ordered_frames
+    parent_frame.update_idletasks()
 
-def on_drag_end(event, frame):
-    """Finalizes the drag, reorders the rules, and refreshes the UI."""
-    if drag_data["widget"]:
-        # Get all rule frames and sort them by their current y-position
-        all_frames = [child for child in frame.winfo_children() if isinstance(child, ttk.LabelFrame)]
-        all_frames.sort(key=lambda w: w.winfo_y())
-        
-        # Get the original rules from the config
-        original_rules = utils.get_rules()
-        rules_by_name = {rule['name']: rule for rule in original_rules}
-        
-        # Create the new list of rules based on the sorted frames
-        new_rules_order = []
-        for f in all_frames:
-            rule_name = f.cget("text")
-            if rule_name in rules_by_name:
-                new_rules_order.append(rules_by_name[rule_name])
+    start_positions = {
+        frame: frame.winfo_y()
+        for frame in original_order
+    }
+    card_heights = {frame: frame.winfo_height() for frame in original_order}
+    first_position = min(start_positions.values())
+    target_positions = {}
+    next_position = first_position
+    for frame in ordered_frames:
+        target_positions[frame] = next_position
+        next_position += card_heights[frame] + 12
 
-        # Save the new order to the config file
+    parent_height = max(parent_frame.winfo_reqheight(), next_position)
+    parent_frame.pack_propagate(False)
+    parent_frame.configure(height=parent_height)
+
+    for frame in original_order:
+        frame.pack_forget()
+        frame.place(
+            x=4,
+            y=start_positions[frame],
+            relwidth=1,
+            width=-8,
+            height=card_heights[frame],
+        )
+        frame.move_up_button.configure(state="disabled")
+        frame.move_down_button.configure(state="disabled")
+
+    step_count = 12
+
+    def finish_animation():
+        if not parent_frame.winfo_exists():
+            return
+        for frame in ordered_frames:
+            frame.place_forget()
+            frame.pack(pady=6, padx=4, fill="x")
+        parent_frame.pack_propagate(True)
+        _update_rule_order_controls(parent_frame)
+        parent_frame.reorder_animation_active = False
+
+    def animate_step(step):
+        if not parent_frame.winfo_exists():
+            return
+        progress = step / step_count
+        eased_progress = 1 - (1 - progress) ** 3
+        for frame in ordered_frames:
+            start = start_positions[frame]
+            target = target_positions[frame]
+            position = round(start + (target - start) * eased_progress)
+            frame.place_configure(y=position)
+
+        if step >= step_count:
+            finish_animation()
+        else:
+            parent_frame.after(16, lambda: animate_step(step + 1))
+
+    animate_step(1)
+
+
+def move_rule(rule_frame, direction):
+    """Move a rule by one position and save its new priority."""
+    if direction not in (-1, 1):
+        raise ValueError("Rule movement direction must be -1 or 1.")
+
+    parent_frame = rule_frame.master
+    if getattr(parent_frame, "reorder_animation_active", False):
+        return
+    original_order = _rule_frames(parent_frame)
+    current_index = original_order.index(rule_frame)
+    target_index = current_index + direction
+    if not 0 <= target_index < len(original_order):
+        return
+
+    ordered_frames = original_order.copy()
+    ordered_frames.insert(target_index, ordered_frames.pop(current_index))
+
+    try:
         config = utils.load_config()
-        config['rules'] = new_rules_order
+        if not isinstance(config, dict):
+            raise ValueError("The configuration could not be loaded.")
+        config["rules"] = [frame.rule_data for frame in ordered_frames]
         utils.save_config(config)
+    except Exception as error:
+        utils.logger.exception("Could not save the new rule order.")
+        messagebox.showerror(
+            "Could not reorder rules",
+            f"The new order was not saved.\n\n{error}",
+            parent=parent_frame.winfo_toplevel(),
+        )
+        return
 
-        # Reset the drag data
-        drag_data["widget"] = None
-        
-        # Refresh the entire list of rules to reflect the new order
-        refresh_rules_list(frame)
+    parent_frame.reorder_animation_active = True
+    _animate_rule_order(parent_frame, original_order, ordered_frames)
 
 def open_config_window_threaded():
     """Opens the main configuration window in a separate thread."""
@@ -91,66 +144,117 @@ def refresh_rules_list(frame):
     if rules:
         create_rule_cards(frame, rules) # Use the refactored card creation logic
     else:
-        ttk.Label(frame, text="Could not load or find any rules in config.yaml.").pack(pady=20)
+        ttk.Label(
+            frame,
+            text=(
+                "Could not load the configuration."
+                if rules is None
+                else "No rules found. Add a rule to get started."
+            ),
+            bootstyle="secondary",
+            padding=20,
+        ).pack(anchor="center", pady=30)
 
 def create_rule_cards(parent_frame, rules):
-    """Creates and packs all the rule card widgets into the parent_frame."""
+    """Create the rule cards in priority order."""
+    parent_frame.rule_frame_order = []
     config_window = parent_frame.winfo_toplevel()
-    for rule in rules:
-        rule_frame = ttk.LabelFrame(parent_frame, text=f"{rule.get('name', 'N/A')}", padding="10", bootstyle="primary")
-        rule_frame.pack(pady=10, padx=10, fill="x")
-
-        # --- Grid Configuration ---
-        # Configure column 1 to take up any extra space, pushing the buttons to the right
+    for index, rule in enumerate(rules, start=1):
+        rule_frame = ttk.LabelFrame(
+            parent_frame,
+            padding=(14, 12),
+            bootstyle="secondary",
+        )
+        rule_frame.rule_data = rule
+        parent_frame.rule_frame_order.append(rule_frame)
+        rule_frame.pack(pady=6, padx=4, fill="x")
         rule_frame.columnconfigure(1, weight=1)
 
-        # --- Labels and Values (Columns 0 and 1) ---
-        ttk.Label(rule_frame, text="Extensions:").grid(row=0, column=0, sticky="w", pady=2, padx=5)
-        ext_text = ", ".join(rule.get('extensions', [])) or "Any"
-        ttk.Label(rule_frame, text=ext_text, wraplength=350).grid(row=0, column=1, sticky="w")
+        header = ttk.Frame(rule_frame)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        header.columnconfigure(2, weight=1)
 
-        ttk.Label(rule_frame, text="Keywords:").grid(row=1, column=0, sticky="w", pady=2, padx=5)
-        key_text = ", ".join(rule.get('keywords', [])) or "None"
-        ttk.Label(rule_frame, text=key_text, wraplength=350).grid(row=1, column=1, sticky="w")
+        rule_frame.order_label = ttk.Label(
+            header,
+            text=f"{index:02}",
+            bootstyle="primary",
+            width=3,
+            anchor="center",
+        )
+        rule_frame.order_label.grid(row=0, column=0, padx=(0, 8))
+        movement_controls = ttk.Frame(header)
+        movement_controls.grid(row=0, column=1, padx=(0, 8))
+        rule_frame.move_up_button = ttk.Button(
+            movement_controls,
+            text="↑",
+            takefocus=False,
+            command=lambda card=rule_frame: move_rule(card, -1),
+            bootstyle="light",
+            width=2,
+            padding=0,
+        )
+        rule_frame.move_up_button.pack()
+        rule_frame.move_down_button = ttk.Button(
+            movement_controls,
+            text="↓",
+            takefocus=False,
+            command=lambda card=rule_frame: move_rule(card, 1),
+            bootstyle="light",
+            width=2,
+            padding=0,
+        )
+        rule_frame.move_down_button.pack(pady=(2, 0))
+        ttk.Label(
+            header,
+            text=rule.get("name", "Untitled rule"),
+            font=("Segoe UI", 11, "bold"),
+        ).grid(row=0, column=2, sticky="w")
 
-        ttk.Label(rule_frame, text="Destination:").grid(row=2, column=0, sticky="w", pady=2, padx=5)
-        ttk.Label(rule_frame, text=rule.get('destination', 'N/A')).grid(row=2, column=1, sticky="w")
-
-        # --- Buttons (Column 2) ---
-        button_frame = ttk.Frame(rule_frame)
-        # Place the frame in the third column, spanning all three rows, and stick it to the top-right
-        button_frame.grid(row=0, column=2, rowspan=3, sticky="ne", padx=5, pady=5)
-
-        edit_button = ttk.Button(
+        button_frame = ttk.Frame(header)
+        button_frame.grid(row=0, column=3, sticky="e")
+        ttk.Button(
             button_frame,
             text="Edit",
-            command=lambda r=rule: open_edit_window(r, config_window, parent_frame),
-            bootstyle="primary"
-        )
-        # Pack the buttons to stack them vertically
-        edit_button.pack(fill='x')
-
-        delete_button = ttk.Button(
+            command=lambda r=rule: open_edit_window(
+                r, config_window, parent_frame
+            ),
+            bootstyle="primary-outline",
+            width=7,
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
             button_frame,
             text="Delete",
-            command=lambda r=rule: open_delete_window(r, config_window, parent_frame),
-            bootstyle="danger"
+            command=lambda r=rule: open_delete_window(
+                r, config_window, parent_frame
+            ),
+            bootstyle="danger-outline",
+            width=7,
+        ).pack(side="left")
+
+        ttk.Separator(rule_frame).grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8)
         )
-        delete_button.pack(fill='x', pady=5)
 
-        # --- Bindings for Drag and Drop ---
-        # Bind events to the main frame of the rule card
-        rule_frame.bind("<ButtonPress-1>", lambda e, w=rule_frame: on_drag_start(e, w))
-        rule_frame.bind("<B1-Motion>", on_drag_motion)
-        rule_frame.bind("<ButtonRelease-1>", lambda e, f=parent_frame: on_drag_end(e, f))
+        fields = (
+            ("Extensions", ", ".join(rule.get("extensions", [])) or "Any"),
+            ("Keywords", ", ".join(rule.get("keywords", [])) or "None"),
+            ("Destination", rule.get("destination", "Not set")),
+        )
+        for row, (label, value) in enumerate(fields, start=2):
+            ttk.Label(
+                rule_frame,
+                text=label,
+                bootstyle="secondary",
+                width=12,
+            ).grid(row=row, column=0, sticky="nw", pady=2)
+            ttk.Label(
+                rule_frame,
+                text=value,
+                wraplength=620,
+                justify="left",
+            ).grid(row=row, column=1, sticky="w", pady=2)
 
-        # Also bind the events to all children, so the drag can be initiated from anywhere inside the card
-        for child in rule_frame.winfo_children():
-            if isinstance(child, (ttk.Button, ttk.Frame)):
-                continue
-            child.bind("<ButtonPress-1>", lambda e, w=rule_frame: on_drag_start(e, w))
-            child.bind("<B1-Motion>", on_drag_motion)
-            child.bind("<ButtonRelease-1>", lambda e, f=parent_frame: on_drag_end(e, f))
+    _update_rule_order_controls(parent_frame)
 
 def set_window_icon(window):
     """Sets the broom icon for the window based on the OS."""
@@ -187,60 +291,75 @@ def open_config_window():
         return
 
     # If window doesn't exist, create it
-    config_window = ttk.Window(themename="litera")
+    config_window = ttk.Window(themename="cosmo")
     config_window_instance = config_window # Store the instance
-    config_window.title("Configure Rules")
+    config_window.title("Download Organizer")
     set_window_icon(config_window)
     
     config_window.protocol("WM_DELETE_WINDOW", config_window.withdraw)
 
-    w, h = 800, 500
+    w, h = 960, 680
     ws, hs = config_window.winfo_screenwidth(), config_window.winfo_screenheight()
     x, y = (ws/2) - (w/2), (hs/2) - (h/2)
     config_window.geometry('%dx%d+%d+%d' % (w, h, x, y))
+    config_window.minsize(760, 520)
 
-    main_frame = tk.Frame(config_window)
-    main_frame.pack(fill='both', expand=True)
+    main_frame = ttk.Frame(config_window)
+    main_frame.pack(fill="both", expand=True)
 
-    top_frame = ttk.Frame(main_frame)
-    top_frame.pack(fill='x', padx=10, pady=5)
+    header = ttk.Frame(main_frame, padding=(20, 18, 20, 10))
+    header.pack(fill="x")
+    ttk.Label(
+        header,
+        text="Download Organizer",
+        font=("Segoe UI", 18, "bold"),
+    ).pack(anchor="w")
+    ttk.Label(
+        header,
+        text="Manage your sorting rules. Rules at the top are checked first.",
+        bootstyle="secondary",
+    ).pack(anchor="w", pady=(3, 0))
+    ttk.Label(
+        header,
+        text="SORTING RULES",
+        font=("Segoe UI", 9, "bold"),
+        bootstyle="primary",
+    ).pack(anchor="w", pady=(16, 0))
 
-    add_button = ttk.Button(
-        top_frame,
-        text="Add New Rule",
-        # The command will call a new threaded function
+    toolbar = ttk.Frame(main_frame, padding=(20, 10, 20, 14))
+    toolbar.pack(side="bottom", fill="x")
+    ttk.Button(
+        toolbar,
+        text="Add rule",
         command=lambda: open_add_window(config_window, scrollable_frame),
-        bootstyle="success-outline" # Green outline button
-    )
-    add_button.pack(side="left")
-    sort_button = ttk.Button(
-        top_frame,
-        text="Sort Downloads folder",
-        # The command will sort Download folder
-        command=lambda: utils.file_sorter(),
-        bootstyle="info-outline"
-    )
-    sort_button.pack(side="left")
-    preview_button = ttk.Button(
-        top_frame,
-        text="Preview sort",
+        bootstyle="primary",
+    ).pack(side="left", padx=(0, 8))
+    ttk.Button(
+        toolbar,
+        text="Sort now",
+        command=utils.file_sorter,
+        bootstyle="success-outline",
+    ).pack(side="left", padx=(0, 8))
+    ttk.Button(
+        toolbar,
+        text="Preview",
         command=lambda: open_sort_preview(config_window),
-        bootstyle="secondary-outline"
-    )
-    preview_button.pack(side="left")
-    create_default_folders_button = ttk.Button(
-        top_frame,
-        text="Create deafult folders",
-        command=lambda: utils.create_folders(),
-        bootstyle="primary-outline" # Default outline button
-    )
-    create_default_folders_button.pack(side="left")
-    interval_frame = ttk.Frame(top_frame)
-    interval_frame.pack(side="left", padx=5)
-    ttk.Label(interval_frame, text="Interval:").pack(side="left")
+        bootstyle="secondary-outline",
+    ).pack(side="left", padx=(0, 8))
+    ttk.Button(
+        toolbar,
+        text="Create folders",
+        command=utils.create_folders,
+        bootstyle="secondary-outline",
+    ).pack(side="left")
+
+    interval_frame = ttk.Frame(toolbar)
+    interval_frame.pack(side="right")
+    ttk.Label(interval_frame, text="Check every").pack(side="left", padx=(0, 6))
     interval_var = tk.StringVar(value=str(utils.get_interval()))
     interval_entry = ttk.Entry(interval_frame, textvariable=interval_var, width=5)
-    interval_entry.pack(side="left", padx=(0, 5))
+    interval_entry.pack(side="left", padx=(0, 4))
+    ttk.Label(interval_frame, text="min").pack(side="left", padx=(0, 8))
 
     def apply_interval(var_to_use):
         try:
@@ -248,37 +367,73 @@ def open_config_window():
             if new_interval > 0:
                 utils.save_interval(new_interval)
             else:
-                print("Interval must be a positive number.")
-        except ValueError:
-            print("Invalid interval. Please enter a number.")
+                raise ValueError("Enter a number greater than zero.")
+        except ValueError as error:
+            messagebox.showerror(
+                "Invalid interval",
+                str(error) or "Enter a whole number greater than zero.",
+                parent=config_window,
+            )
+        except Exception as error:
+            utils.logger.exception("Could not save the sorting interval.")
+            messagebox.showerror(
+                "Could not save interval",
+                str(error),
+                parent=config_window,
+            )
             
-    apply_button = ttk.Button(
+    ttk.Button(
         interval_frame,
         text="Apply",
         command=lambda: apply_interval(interval_var),
-        bootstyle="secondary" # A subtle button style
+        bootstyle="primary-outline",
+    ).pack(side="left")
+
+    rules_container = ttk.Frame(main_frame)
+    rules_container.pack(fill="both", expand=True)
+    canvas = tk.Canvas(
+        rules_container,
+        highlightthickness=0,
+        background=config_window.style.colors.bg,
     )
-    apply_button.pack(side="left")
+    scrollbar = ttk.Scrollbar(rules_container, orient="vertical", command=canvas.yview)
+    scrollable_frame = ttk.Frame(canvas, padding=(16, 8, 16, 16))
 
-    canvas = tk.Canvas(main_frame)
-    scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
-    scrollable_frame = ttk.Frame(canvas)
-
-    scrollable_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-    canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+    scrollable_frame.bind(
+        "<Configure>",
+        lambda event: canvas.configure(scrollregion=canvas.bbox("all")),
+    )
+    canvas_window = canvas.create_window(
+        (0, 0),
+        window=scrollable_frame,
+        anchor="nw",
+    )
     canvas.configure(yscrollcommand=scrollbar.set)
-    canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
-    canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-
-    canvas.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+    canvas.bind(
+        "<Configure>",
+        lambda event: canvas.itemconfigure(canvas_window, width=event.width),
+    )
+    canvas.bind_all(
+        "<MouseWheel>",
+        lambda event: canvas.yview_scroll(int(-1 * (event.delta / 120)), "units"),
+    )
+    canvas.pack(side="left", fill="both", expand=True)
     scrollbar.pack(side="right", fill="y")
 
     rules = utils.get_rules()
     if rules:
-        # Initial creation of rule cards
         create_rule_cards(scrollable_frame, rules)
     else:
-        ttk.Label(scrollable_frame, text="Could not load or find any rules in config.yaml.").pack(pady=20)
+        ttk.Label(
+            scrollable_frame,
+            text=(
+                "Could not load the configuration."
+                if rules is None
+                else "No rules found. Add a rule to get started."
+            ),
+            bootstyle="secondary",
+            padding=20,
+        ).pack(anchor="center", pady=30)
 
     config_window.mainloop()
 

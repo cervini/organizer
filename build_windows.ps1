@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "2.1.2",
+    [string]$Version = "", # The version of the application to build
     [string]$PythonPath
 )
 
@@ -134,12 +134,15 @@ try {
     New-Item -ItemType Directory -Path $smokeAppDataDirectory | Out-Null
     $env:APPDATA = $smokeAppDataDirectory
     $installerWasRun = $true
-    Invoke-CheckedCommand $installerPath @(
+    $installerProcess = Start-Process -FilePath $installerPath -ArgumentList @(
         "/VERYSILENT",
         "/SUPPRESSMSGBOXES",
         "/NORESTART",
-        "/DIR=$smokeInstallDirectory"
-    )
+        "/DIR=`"$smokeInstallDirectory`""
+    ) -Wait -PassThru
+    if ($installerProcess.ExitCode -ne 0) {
+        throw "Installer smoke-test setup failed with exit code $($installerProcess.ExitCode)."
+    }
 
     $installedExecutable = Join-Path $smokeInstallDirectory "main.exe"
     $installedLegacyConfig = Join-Path $smokeInstallDirectory "config.yaml"
@@ -151,20 +154,41 @@ try {
 interval: 19
 rules: []
 "@ | Set-Content -LiteralPath $installedLegacyConfig -Encoding ascii
-    Invoke-CheckedCommand $installedExecutable @("--check-config")
+    $configCheckProcess = Start-Process -FilePath $installedExecutable -ArgumentList @(
+        "--check-config"
+    ) -Wait -PassThru
+    if ($configCheckProcess.ExitCode -ne 0) {
+        throw "Packaged configuration check failed with exit code $($configCheckProcess.ExitCode)."
+    }
 
     $migratedConfig = Join-Path $smokeAppDataDirectory "Organizer\config.yaml"
     if (
         -not (Test-Path -LiteralPath $migratedConfig) -or
         (Get-Content -LiteralPath $migratedConfig -Raw) -notmatch "interval:\s*19"
     ) {
-        throw "Packaged app did not migrate the installed legacy configuration."
+        $actualConfig = if (Test-Path -LiteralPath $migratedConfig) {
+            Get-Content -LiteralPath $migratedConfig -Raw
+        } else {
+            "<missing>"
+        }
+        $smokeLog = Join-Path $smokeAppDataDirectory "Organizer\organizer.log"
+        $logContents = if (Test-Path -LiteralPath $smokeLog) {
+            Get-Content -LiteralPath $smokeLog -Raw
+        } else {
+            "<missing>"
+        }
+        throw "Packaged app did not migrate the installed legacy configuration. Expected interval 19 at $migratedConfig; found: $actualConfig. App log: $logContents"
     }
     @"
 interval: 17
 rules: []
 "@ | Set-Content -LiteralPath $migratedConfig -Encoding ascii
-    Invoke-CheckedCommand $installedExecutable @("--check-config")
+    $configCheckProcess = Start-Process -FilePath $installedExecutable -ArgumentList @(
+        "--check-config"
+    ) -Wait -PassThru
+    if ($configCheckProcess.ExitCode -ne 0) {
+        throw "Packaged configuration check failed with exit code $($configCheckProcess.ExitCode)."
+    }
     if ((Get-Content -LiteralPath $migratedConfig -Raw) -notmatch "interval:\s*17") {
         throw "The packaged app overwrote the existing per-user configuration."
     }

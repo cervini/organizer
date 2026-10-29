@@ -8,7 +8,7 @@ Download `download-organizer-setup.exe` from the [GitHub Releases](https://githu
 
 ## Use
 
-When the app is running, it checks Downloads at the configured interval and moves matching files. The configuration window lets you add, edit, delete, and reorder rules.
+When the app is running, it checks Downloads at the configured interval and moves matching files. The configuration window lets you add, edit, and delete rules. Use the up and down buttons on a rule to change its priority.
 
 Rules match a file by extension or by a keyword in its name. The first matching rule wins. Destinations can be folders inside Downloads or absolute paths. Use **Preview sort** to see planned moves before starting a manual sort.
 
@@ -40,7 +40,7 @@ python -m unittest discover -s tests -v
 Install Python 3.12 and [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run:
 
 ```powershell
-.\build_windows.ps1 -Version 2.1.3
+.\build_windows.ps1 -Version 2.1.4
 ```
 
 The script runs the tests, builds the app and installer, and checks configuration migration in a temporary installation. The installer is written to `Output\download-organizer-setup.exe`.
